@@ -151,3 +151,46 @@ def test_goal_is_terminal() -> None:
         created_at="2026-01-01T00:00:00Z",
     )
     assert not pending.is_terminal
+
+
+async def test_stream_events_retries_on_transport_error(client: ClaudeWorkerClient) -> None:
+    """On a transient connection failure, stream_events reconnects and resets the backoff counter."""
+    sse_success = "data: HOOK:{\"type\":\"progress\",\"message\":\"Connected\"}\n\ndata: [DONE]\n\n"
+
+    call_count = 0
+
+    def side_effect(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ConnectError("simulated transient failure")
+        return httpx.Response(
+            200, text=sse_success, headers={"content-type": "text/event-stream"}
+        )
+
+    with respx.mock:
+        respx.get(f"{BASE_URL}/goals/retry-test/stream").mock(side_effect=side_effect)
+        events = []
+        async with ClaudeWorkerClient(
+            BASE_URL, api_key=API_KEY, initial_backoff=0.001, max_backoff=0.01
+        ) as client:
+            async for event in client.stream_events("retry-test"):
+                events.append(event)
+
+    assert call_count == 2, "Expected exactly one retry after the transient failure"
+    assert len(events) == 1
+    assert "Connected" in events[0].data
+
+
+async def test_stream_events_raises_after_max_retries(client: ClaudeWorkerClient) -> None:
+    """After max_retries consecutive failures, stream_events re-raises the transport error."""
+    with respx.mock:
+        respx.get(f"{BASE_URL}/goals/fail-all/stream").mock(
+            side_effect=httpx.ConnectError("persistent failure")
+        )
+        with pytest.raises(httpx.ConnectError):
+            async with ClaudeWorkerClient(
+                BASE_URL, api_key=API_KEY, max_retries=2, initial_backoff=0.001
+            ) as client:
+                async for _ in client.stream_events("fail-all"):
+                    pass
