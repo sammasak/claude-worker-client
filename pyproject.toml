@@ -19,7 +19,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/lukasrajala/claude-worker-client"
+Repository = "https://github.com/sammasak/claude-worker-client"
 
 [build-system]
 requires = ["setuptools>=68"]

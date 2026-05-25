@@ -1,29 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
+import queue
+import threading
 from collections.abc import Iterator
 
 from .client import ClaudeWorkerClient
 from .models import Goal, GoalStatus, HealthResponse, StreamEvent
 
 
-def _run_async(coro):
-    """Run an async coroutine synchronously via thread-executor dispatch.
-
-    Each call runs its own event loop in a ThreadPoolExecutor thread.
-    This is the pattern used by Modal's synchronicity library to expose
-    synchronous wrappers over an async-first API.
-    """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
 class SyncClaudeWorkerClient:
     """Synchronous wrapper over :class:`ClaudeWorkerClient`.
 
-    Identical interface to the async client; every method blocks until
-    the underlying coroutine completes, dispatched to a thread executor.
+    Runs a single persistent event loop in a background daemon thread.
+    All async calls are dispatched into that loop via
+    ``asyncio.run_coroutine_threadsafe``, which is the same pattern used
+    by Modal's ``synchronicity`` library.
 
     Usage::
 
@@ -50,22 +42,44 @@ class SyncClaudeWorkerClient:
             initial_backoff=initial_backoff,
             max_backoff=max_backoff,
         )
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    def _run(self, coro):
+        """Dispatch a coroutine to the persistent background event loop and block for the result."""
+        if self._loop is None:
+            raise RuntimeError("Use SyncClaudeWorkerClient as a context manager")
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
 
     def __enter__(self) -> SyncClaudeWorkerClient:
-        _run_async(self._async.__aenter__())
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._thread.start()
+        self._run(self._async.__aenter__())
         return self
 
     def __exit__(self, *args: object) -> None:
-        _run_async(self._async.__aexit__(*args))
+        try:
+            self._run(self._async.__aexit__(*args))
+        finally:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._thread is not None:
+                self._thread.join(timeout=10)
+            if self._loop is not None:
+                self._loop.close()
+            self._loop = None
+            self._thread = None
 
     def health(self) -> HealthResponse:
-        return _run_async(self._async.health())
+        return self._run(self._async.health())
 
     def list_goals(self) -> list[Goal]:
-        return _run_async(self._async.list_goals())
+        return self._run(self._async.list_goals())
 
     def create_goal(self, goal: str) -> Goal:
-        return _run_async(self._async.create_goal(goal))
+        return self._run(self._async.create_goal(goal))
 
     def update_goal(
         self,
@@ -74,21 +88,17 @@ class SyncClaudeWorkerClient:
         status: GoalStatus | None = None,
         result: str | None = None,
     ) -> Goal:
-        return _run_async(self._async.update_goal(goal_id, status=status, result=result))
+        return self._run(self._async.update_goal(goal_id, status=status, result=result))
 
     def stream_events(self, goal_id: str) -> Iterator[StreamEvent]:
         """Synchronously iterate over SSE events for a goal.
 
-        Runs the async generator in a dedicated thread, bridging events
-        back to the calling thread via a queue.
+        Runs the async generator in the persistent background event loop,
+        bridging events back to the calling thread via a thread-safe queue.
         """
-        import queue as queue_module
+        event_queue: queue.SimpleQueue[StreamEvent | BaseException | None] = queue.SimpleQueue()
 
-        event_queue: queue_module.SimpleQueue[StreamEvent | BaseException | None] = (
-            queue_module.SimpleQueue()
-        )
-
-        async def _collect() -> None:
+        async def _drain() -> None:
             try:
                 async for event in self._async.stream_events(goal_id):
                     event_queue.put(event)
@@ -97,16 +107,15 @@ class SyncClaudeWorkerClient:
             finally:
                 event_queue.put(None)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, _collect())
-            while True:
-                item = event_queue.get()
-                if item is None:
-                    break
-                if isinstance(item, BaseException):
-                    raise item
-                yield item
-            future.result()
+        asyncio.run_coroutine_threadsafe(_drain(), self._loop)  # type: ignore[arg-type]
+
+        while True:
+            item = event_queue.get()
+            if item is None:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
     def submit_and_stream(self, goal: str) -> Iterator[StreamEvent]:
         """Create a goal and synchronously stream its events."""
