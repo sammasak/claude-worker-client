@@ -133,21 +133,24 @@ class ClaudeWorkerClient:
                         retry_count = 0
                         backoff = self._initial_backoff
 
+                        # RFC 8895 §9.2: accumulate data lines; dispatch on blank line
                         event_type = "message"
+                        data_lines: list[str] = []
                         async for raw_line in resp.aiter_lines():
                             if raw_line.startswith("event:"):
                                 event_type = raw_line[len("event:") :].strip()
                             elif raw_line.startswith("data:"):
-                                data = raw_line[len("data:") :].strip()
+                                data_lines.append(raw_line[len("data:") :].strip())
+                            elif not raw_line and data_lines:
+                                data = "\n".join(data_lines)
+                                data_lines.clear()
                                 event = StreamEvent(event_type=event_type, data=data)
+                                event_type = "message"
                                 if event.is_done:
                                     return
                                 if event.is_failed:
                                     raise GoalFailed(event.failure_code)
                                 yield event
-                                event_type = "message"
-                            elif not raw_line:
-                                event_type = "message"
             except GoalFailed:
                 raise
             except (httpx.HTTPError, httpx.TransportError):

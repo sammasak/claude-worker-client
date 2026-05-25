@@ -194,3 +194,26 @@ async def test_stream_events_raises_after_max_retries(client: ClaudeWorkerClient
             ) as client:
                 async for _ in client.stream_events("fail-all"):
                     pass
+
+
+async def test_stream_events_multiline_data(client: ClaudeWorkerClient) -> None:
+    """Multi-line SSE data fields (RFC 8895 §9.2) must be joined and emitted as one event."""
+    sse_body = (
+        "data: line1\n"
+        "data: line2\n"
+        "data: line3\n"
+        "\n"
+        "data: [DONE]\n"
+        "\n"
+    )
+    with respx.mock:
+        respx.get(f"{BASE_URL}/goals/multiline/stream").mock(
+            return_value=httpx.Response(200, text=sse_body, headers={"content-type": "text/event-stream"})
+        )
+        events = []
+        async with client:
+            async for event in client.stream_events("multiline"):
+                events.append(event)
+
+    assert len(events) == 1, "Three data lines in one SSE block must produce exactly one event"
+    assert events[0].data == "line1\nline2\nline3"

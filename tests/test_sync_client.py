@@ -1,8 +1,6 @@
 """Tests for SyncClaudeWorkerClient and streaming reconnection logic."""
 
 import asyncio
-import threading
-import time
 
 import httpx
 import pytest
