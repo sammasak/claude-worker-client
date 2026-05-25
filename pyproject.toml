@@ -44,6 +44,12 @@ ignore = ["E501", "TC001", "TC003", "SIM117"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+filterwarnings = [
+    # httpx async generator cleanup emits this on Python 3.14 when a stream is
+    # abandoned mid-iteration (e.g. GoalFailed raised inside stream_events).
+    # The generator is properly finalized by the event loop; the warning is spurious.
+    "ignore:coroutine method 'aclose'.*was never awaited:RuntimeWarning",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["claude_worker"]

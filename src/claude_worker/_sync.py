@@ -48,6 +48,7 @@ class SyncClaudeWorkerClient:
     def _run(self, coro):
         """Dispatch a coroutine to the persistent background event loop and block for the result."""
         if self._loop is None:
+            coro.close()  # prevent ResourceWarning: coroutine never awaited
             raise RuntimeError("Use SyncClaudeWorkerClient as a context manager")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()

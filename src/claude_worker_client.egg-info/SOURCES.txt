@@ -10,3 +10,4 @@ src/claude_worker_client.egg-info/dependency_links.txt
 src/claude_worker_client.egg-info/requires.txt
 src/claude_worker_client.egg-info/top_level.txt
 tests/test_client.py
+tests/test_sync_client.py
