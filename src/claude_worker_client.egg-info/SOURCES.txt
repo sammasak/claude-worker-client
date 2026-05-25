@@ -1,0 +1,11 @@
+pyproject.toml
+src/claude_worker/__init__.py
+src/claude_worker/_sync.py
+src/claude_worker/client.py
+src/claude_worker/models.py
+src/claude_worker_client.egg-info/PKG-INFO
+src/claude_worker_client.egg-info/SOURCES.txt
+src/claude_worker_client.egg-info/dependency_links.txt
+src/claude_worker_client.egg-info/requires.txt
+src/claude_worker_client.egg-info/top_level.txt
+tests/test_client.py

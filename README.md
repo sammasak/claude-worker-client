@@ -1,0 +1,92 @@
+# claude-worker-client
+
+Async Python client for the [claude-worker](https://github.com/sammasak/claude-worker) agent runtime API.
+
+## Installation
+
+```bash
+pip install claude-worker-client
+```
+
+## Usage
+
+### Async
+
+```python
+import asyncio
+from claude_worker import ClaudeWorkerClient
+
+async def main():
+    async with ClaudeWorkerClient("http://worker:4200", api_key="your-key") as client:
+        # Submit a goal and stream progress
+        goal = await client.create_goal("Build a FastAPI service with health endpoint")
+        async for event in client.stream_events(goal.id):
+            print(event.data)
+
+asyncio.run(main())
+```
+
+### Sync (via thread-executor dispatch)
+
+```python
+from claude_worker import SyncClaudeWorkerClient
+
+with SyncClaudeWorkerClient("http://worker:4200", api_key="your-key") as client:
+    goal = client.create_goal("Build a FastAPI service with health endpoint")
+    for event in client.stream_events(goal.id):
+        print(event.data)
+```
+
+## API
+
+### `ClaudeWorkerClient`
+
+Async context manager. All methods are coroutines.
+
+| Method | Description |
+|--------|-------------|
+| `health()` | Get worker health and queue status |
+| `list_goals()` | List all goals |
+| `create_goal(goal)` | Submit a new goal (raises `QueueFull` if queue is at capacity) |
+| `update_goal(id, *, status, result)` | Update goal status or result |
+| `stream_events(goal_id)` | Async-iterate SSE events with automatic reconnection and exponential backoff |
+| `submit_and_stream(goal)` | Create a goal and immediately stream its events |
+
+### `SyncClaudeWorkerClient`
+
+Synchronous wrapper over `ClaudeWorkerClient`. Same interface; dispatches each call to a dedicated thread executor running its own event loop.
+
+### Models
+
+All response types are Pydantic v2 `BaseModel` instances:
+
+- `Goal` — agent goal with status, timestamps, and result
+- `GoalStatus` — `StrEnum`: `pending`, `in_progress`, `done`, `failed`
+- `HealthResponse` — worker health including queue depth and running state
+- `StreamEvent` — a single SSE event with `event_type` and `data`
+
+### Exceptions
+
+| Exception | When raised |
+|-----------|-------------|
+| `QueueFull` | `create_goal` when the server returns 429 |
+| `GoalNotFound` | `update_goal` when the goal ID does not exist |
+| `GoalFailed` | `stream_events` when the server signals `[FAILED:code]` |
+
+## SSE Stream
+
+The event stream reconnects automatically on connection failures with exponential backoff (default: 1s initial, 30s cap, 5 retries). Events with `event_type == "hook"` carry structured progress messages from the agent's tool hooks. The stream terminates on `[DONE]` or raises `GoalFailed` on `[FAILED:]`.
+
+## Development
+
+```bash
+# Install dev dependencies
+uv sync --extra dev
+
+# Run tests
+pytest
+
+# Lint
+ruff check src/ tests/
+ruff format src/ tests/
+```
