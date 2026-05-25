@@ -107,6 +107,9 @@ class SyncClaudeWorkerClient:
             finally:
                 event_queue.put(None)
 
+        # self._loop is guaranteed non-None here: stream_events can only be reached
+        # through the context manager (__enter__ sets _loop before returning self),
+        # but the type checker cannot see that threading invariant.
         asyncio.run_coroutine_threadsafe(_drain(), self._loop)  # type: ignore[arg-type]
 
         while True:

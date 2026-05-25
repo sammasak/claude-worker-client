@@ -13,6 +13,7 @@ Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.25; extra == "dev"
 Requires-Dist: respx>=0.21; extra == "dev"
 Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
 
 # claude-worker-client
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -106,11 +106,16 @@ class ClaudeWorkerClient:
         resp.raise_for_status()
         return Goal.model_validate(resp.json())
 
-    async def stream_events(self, goal_id: str) -> AsyncIterator[StreamEvent]:
+    async def stream_events(self, goal_id: str) -> AsyncGenerator[StreamEvent, None]:
         """Stream SSE events for a goal, reconnecting with exponential backoff on failure.
 
         Yields :class:`StreamEvent` instances until the server signals completion
         (``[DONE]``) or raises :class:`GoalFailed` on failure.
+
+        Note: SSE streaming uses its own ``httpx.AsyncClient`` with an unbounded
+        read timeout and a 10-second connect timeout, independent of the ``timeout``
+        passed to the constructor. The constructor timeout applies to all non-streaming
+        calls (health, list_goals, create_goal, update_goal).
         """
         retry_count = 0
         backoff = self._initial_backoff
@@ -152,7 +157,7 @@ class ClaudeWorkerClient:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, self._max_backoff)
 
-    async def submit_and_stream(self, goal: str) -> AsyncIterator[StreamEvent]:
+    async def submit_and_stream(self, goal: str) -> AsyncGenerator[StreamEvent, None]:
         """Create a goal and immediately stream its events."""
         created = await self.create_goal(goal)
         async for event in self.stream_events(created.id):
